@@ -3,35 +3,41 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include "cerver.h"
 
-typedef struct Request {
-    char *method;
-    char *path;
-} Request;
+void cerver_send(Response *response, const char *status_line, const char *body) {
+    char header_buffer[1024] = {0};
+    strcat(header_buffer, status_line);
+    strcat(header_buffer, "\r\n");
+    for (int i = 0; i < response->header_count; i++) {
+        strcat(header_buffer, response->headers[i].key);
+        strcat(header_buffer, ": ");
+        strcat(header_buffer, response->headers[i].value);
+        strcat(header_buffer, "\r\n");
+    }
+    strcat(header_buffer, "\r\n"); // End of headers
+    send(response->socket, header_buffer, strlen(header_buffer), 0);
+    send(response->socket, body, strlen(body), 0);
+}
 
-typedef struct Response {
-    int socket;
-} Response;
+void parse_headers(char *buffer, Request *request) {
+    char *line = strtok(buffer, "\r\n");
+    while (line != NULL) {
+        if (strstr(line, ": ") != NULL) {
+            char *key = strtok(line, ": ");
+            char *value = strtok(NULL, "\r\n");
+            request->headers[request->header_count].key = strdup(key);
+            request->headers[request->header_count].value = strdup(value);
+            request->header_count++;
+        }
+        line = strtok(NULL, "\r\n");
+    }
+}
 
-typedef struct Route {
-    char *path;
-    char *method;
-    void (*handler) (struct Request *, struct Response *);
-} Route;
-
-typedef struct Cerver {
-    int port;
-    Route *routes;
-    int route_count;
-    int route_capacity;
-    void (*start) (struct Cerver *);
-    void (*route_register) (struct Cerver *, char *, char *, void (*handler) (struct Request *, struct Response *));
-    void (*handle_request) (struct Cerver *, struct Request *, struct Response *);
-    void (*send) (struct Response *, const char *);
-} Cerver;
-
-void cerver_send(Response *response, const char *data) {
-    send(response->socket, data, strlen(data), 0);
+void add_header(Response *response, const char *key, const char *value) {
+    response->headers[response->header_count].key = strdup(key);
+    response->headers[response->header_count].value = strdup(value);
+    response->header_count++;
 }
 
 void cerver_start(Cerver *cerver) {
@@ -84,8 +90,8 @@ void cerver_start(Cerver *cerver) {
 
         // Handle the connection
         printf("Connection accepted\n");
-        char buffer[1024] = {0};
-        ssize_t bytes_read = read(new_socket, buffer, 1024);
+        char buffer[2048] = {0}; // Increased buffer size to handle larger requests
+        ssize_t bytes_read = read(new_socket, buffer, 2048);
         if (bytes_read < 0) {
             perror("Read error");
             close(new_socket);
@@ -107,13 +113,67 @@ void cerver_start(Cerver *cerver) {
         }
 
         // Create Request and Response objects
-        Request request = { .method = method, .path = path };
-        Response response = { .socket = new_socket };
+        Request request = { .method = method, .path = path, .headers = malloc(sizeof(Header) * 20), .header_count = 0, .body = NULL };
+        Response response = { .socket = new_socket, .headers = malloc(sizeof(Header) * 20), .header_count = 0, .body = NULL };
 
+        // Parse headers
+        parse_headers(buffer, &request);
+
+        // Extract body if present
+        char *body_start = NULL;
+        for (size_t i = 0; i < bytes_read - 3; i++) {
+            if (buffer[i] == '\r' && buffer[i + 1] == '\n' && buffer[i + 2] == '\r' && buffer[i + 3] == '\n') {
+                body_start = buffer + i + 4;
+                break;
+            }
+        }
+
+        if (body_start != NULL) {
+            size_t body_length = bytes_read - (body_start - buffer);
+            request.body = (char *)malloc(body_length + 1); // Allocate memory for the body
+            if (request.body) {
+                strncpy(request.body, body_start, body_length);
+                request.body[body_length] = '\0'; // Null-terminate the body
+                printf("Extracted body: %s\n", request.body); // Debug statement
+            } else {
+                fprintf(stderr, "Failed to allocate memory for request body\n");
+            }
+        } else {
+            printf("No body found in the request\n"); // Debug statement
+            printf("Received buffer length: %ld\n", bytes_read); // Print the length of the buffer
+            printf("Received buffer: %s\n", buffer); // Print the entire buffer for debugging
+
+            // Print each character in the buffer with its ASCII value
+            for (size_t i = 0; i < bytes_read; i++) {
+                printf("buffer[%zu] = '%c' (ASCII: %d)\n", i, buffer[i], (unsigned char)buffer[i]);
+            }
+        }
         // Handle the request
         printf("Method: %s\n", method);
         printf("Path: %s\n", path);
         cerver->handle_request(cerver, &request, &response);
+
+        // Send the response
+        cerver_send(&response, "HTTP/1.1 200 OK", response.body ? response.body : "");
+
+        // Free allocated memory
+        for (int i = 0; i < request.header_count; i++) {
+            free(request.headers[i].key);
+            free(request.headers[i].value);
+        }
+        free(request.headers);
+        if (request.body) {
+            free(request.body);
+        }
+
+        for (int i = 0; i < response.header_count; i++) {
+            free(response.headers[i].key);
+            free(response.headers[i].value);
+        }
+        free(response.headers);
+        if (response.body) {
+            free(response.body);
+        }
 
         close(new_socket);
     }
@@ -138,8 +198,11 @@ void cerver_route_register(Cerver *cerver, char *path, char *method, void (*hand
 
 void handle_request(Cerver *cerver, Request *request, Response *response) {
     int route_found = 0;
+    printf("Handling request for path: %s, method: %s\n", request->path, request->method);
     for (int i = 0; i < cerver->route_count; i++) {
+        printf("Checking route: %s %s\n", cerver->routes[i].method, cerver->routes[i].path);
         if (strcmp(cerver->routes[i].path, request->path) == 0 && strcmp(cerver->routes[i].method, request->method) == 0) {
+            printf("Route found, calling handler\n");
             cerver->routes[i].handler(request, response);
             route_found = 1;
             break;
@@ -147,8 +210,11 @@ void handle_request(Cerver *cerver, Request *request, Response *response) {
     }
     if (!route_found) {
         // Send 404 response
-        const char *not_found_response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
-        cerver_send(response, not_found_response);
+        printf("Route not found, sending 404 response\n");
+        add_header(response, "Content-Length", "0");
+        const char *status_line = "HTTP/1.1 404 Not Found";
+        const char *body = "";
+        cerver_send(response, status_line, body);
     }
 }
 
@@ -172,17 +238,4 @@ Cerver *NewCerver(int port) {
     }
 
     return cerver;
-}
-
-void HelloWorld(Request *request, Response *response) {
-    const char *response_data = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Hello, World!</h1></body></html>";
-    cerver_send(response, response_data);
-}
-
-int main() {
-    Cerver *cerver = NewCerver(8080);
-    cerver->route_register(cerver, "/", "GET", HelloWorld);
-    cerver->route_register(cerver, "/hello", "GET", HelloWorld);
-    cerver->start(cerver);
-    return 0;
 }
