@@ -5,6 +5,7 @@ The objective of Cerver is to convert into a library that can be used in other p
 
 ## Features
 - [x] Basic HTTP server
+- [x] Support headers
 - [x] Permit registering routes
 - [x] Handle GET requests
 - [x] Handle POST requests
@@ -15,7 +16,7 @@ The objective of Cerver is to convert into a library that can be used in other p
 - [x] Handle HEAD requests
 - [x] Handle CONNECT requests
 - [x] Handle TRACE requests
-- [ ] Support for JSON responses and requests
+- [x] Support for JSON responses and requests
 - [ ] Permit parse JSON requests into C structures
 - [ ] Support for XML responses and requests
 - [ ] Permit parse XML requests into C structures
@@ -27,4 +28,5 @@ The objective of Cerver is to convert into a library that can be used in other p
 - [ ] Permit parse multi-part requests into C structures
 - [ ] Support for file uploads
 - [ ] Middleware support
-
+- [ ] Support for websockets
+- [ ] Support for Static files
