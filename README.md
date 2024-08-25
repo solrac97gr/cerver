@@ -6,7 +6,7 @@ The objective of Cerver is to convert into a library that can be used in other p
 ## Features
 - [x] Basic HTTP server
 - [x] Serve static files
-- [ ] Handle GET requests
+- [x] Handle GET requests
 - [ ] Handle POST requests
 - [ ] Handle PUT requests
 - [ ] Handle DELETE requests
