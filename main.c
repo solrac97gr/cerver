@@ -57,7 +57,7 @@ void handle_client(int connfd) {
     char buffer[BUFFER_SIZE] = {0};
     recv(connfd, buffer, BUFFER_SIZE, 0);
 
-    if (strncmp(buffer, "GET /", 5) == 0) {
+    if (strncmp(buffer, "GET ", 4) == 0) {
         char *file = buffer + 5;
         char *end = strchr(file, ' ');
         if (end) {
